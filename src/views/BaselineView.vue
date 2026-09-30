@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import { useAppStore } from '@/stores/app'
 import { diffSettings } from '@/services/validation'
+import { settingFieldLabels } from '@/services/labels'
 
 const store = useAppStore()
 const { data, settings } = storeToRefs(store)
@@ -24,6 +25,29 @@ const baselineComments = computed(() =>
   ),
 )
 
+/** 快照之后定值版本又发生变化（含新增/删除），旧快照不能再锁定 */
+const versionDrifted = computed(() => {
+  if (!selected.value) return false
+  return settings.value.some((setting) => {
+    const snapVersion = selected.value?.settingVersions[setting.id]
+    return snapVersion === undefined || snapVersion !== setting.version
+  })
+})
+
+const staleIssues = computed(() => data.value.issues.filter((issue) => issue.validity === 'stale'))
+const openHighIssues = computed(() =>
+  data.value.issues.filter((issue) => issue.level === 'high' && issue.status !== 'closed'),
+)
+const openIssues = computed(() => data.value.issues.filter((issue) => issue.status !== 'closed'))
+const canLock = computed(
+  () =>
+    selected.value &&
+    selected.value.status !== 'locked' &&
+    !versionDrifted.value &&
+    staleIssues.value.length === 0 &&
+    openIssues.value.length === 0,
+)
+
 watch(
   () => data.value.baselines,
   (list) => {
@@ -31,15 +55,7 @@ watch(
   },
 )
 
-const fieldLabels: Record<string, string> = {
-  currentA: '电流定值',
-  timeS: '动作时限',
-  direction: '方向',
-  sensitivity: '灵敏度',
-  recloseEnabled: '重合闸投入',
-  recloseDelayS: '重合延迟',
-  startCondition: '启动条件',
-}
+const fieldLabels = settingFieldLabels
 
 async function createBaseline() {
   if (!baselineNote.value.trim()) {
@@ -81,13 +97,13 @@ async function submitComment() {
   <div>
     <PageHeader
       title="会签与基线"
-      description="冻结已批准的定值快照；高风险问题未闭环时不允许锁定基线。"
+      description="按定值版本冻结快照；版本漂移、失效结论或未确认问题存在时不允许锁定基线。"
     >
       <template #actions>
         <el-button @click="createDialog = true">创建基线上会签</el-button>
         <el-button
           type="primary"
-          :disabled="!selected || selected.status === 'locked'"
+          :disabled="!canLock"
           :loading="store.saving"
           @click="lockBaseline"
         >
@@ -137,10 +153,27 @@ async function submitComment() {
               {{ selected.lockedAt ? new Date(selected.lockedAt).toLocaleString('zh-CN') : '尚未锁定' }}
             </el-descriptions-item>
             <el-descriptions-item label="快照定值">{{ selected.snapshot.length }} 条</el-descriptions-item>
+            <el-descriptions-item label="版本一致性">
+              <el-tag :type="versionDrifted ? 'danger' : 'success'" effect="plain">
+                {{ versionDrifted ? '快照后定值版本已变化' : '与当前定值版本一致' }}
+              </el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="已确认问题">
+              {{ selected.confirmedIssues?.length ?? 0 }} 条（仅锁定时已关闭且有效的结论会被冻结）
+            </el-descriptions-item>
             <el-descriptions-item label="校验码">
               <span class="mono">{{ selected.checksum }}</span>
             </el-descriptions-item>
           </el-descriptions>
+
+          <el-alert
+            v-if="versionDrifted && selected.status !== 'locked'"
+            title="定值版本相对快照已变化，此基线不能锁定；请按当前定值重新创建基线。"
+            type="error"
+            show-icon
+            :closable="false"
+            style="margin: 12px 0"
+          />
 
           <div class="panel-title" style="margin-top: 18px">
             <h3>与当前定值差异</h3>
@@ -155,7 +188,7 @@ async function submitComment() {
               </template>
             </el-table-column>
             <el-table-column label="字段" width="110">
-              <template #default="{ row }">{{ fieldLabels[row.field] ?? row.field }}</template>
+              <template #default="{ row }">{{ fieldLabels[row.field as keyof typeof fieldLabels] ?? row.field }}</template>
             </el-table-column>
             <el-table-column label="基线值" width="120">
               <template #default="{ row }"><span class="diff-before">{{ row.before }}</span></template>
@@ -195,17 +228,44 @@ async function submitComment() {
         <div class="lock-checklist">
           <el-checkbox :model-value="true" disabled>批量校验已执行并留痕</el-checkbox>
           <el-checkbox :model-value="true" disabled>至少一个故障场景已完成验证</el-checkbox>
-          <el-checkbox
-            :model-value="!data.issues.some((issue) => issue.level === 'high' && issue.status !== 'closed')"
-            disabled
-          >
+          <el-checkbox :model-value="!versionDrifted" disabled>
+            快照版本与当前定值一致（无版本漂移）
+          </el-checkbox>
+          <el-checkbox :model-value="staleIssues.length === 0" disabled>
+            无因版本变化而失效、尚未重算确认的问题
+          </el-checkbox>
+          <el-checkbox :model-value="openHighIssues.length === 0" disabled>
             高风险问题全部关闭
+          </el-checkbox>
+          <el-checkbox :model-value="openIssues.length === 0" disabled>
+            全部校验问题已确认关闭
           </el-checkbox>
         </div>
         <el-alert
-          v-if="data.issues.some((issue) => issue.level === 'high' && issue.status !== 'closed')"
+          v-if="versionDrifted"
+          title="定值版本相对快照已变化，需重新创建基线，旧结论不能锁定。"
+          type="error"
+          :closable="false"
+          show-icon
+        />
+        <el-alert
+          v-else-if="staleIssues.length"
+          :title="`有 ${staleIssues.length} 条问题结论已失效，请重新批量校验后再锁定，失效结论不会进入基线。`"
+          type="error"
+          :closable="false"
+          show-icon
+        />
+        <el-alert
+          v-else-if="openHighIssues.length"
           title="当前存在未关闭的高风险问题，批准锁定会被系统拒绝。"
           type="error"
+          :closable="false"
+          show-icon
+        />
+        <el-alert
+          v-else-if="openIssues.length"
+          :title="`仍有 ${openIssues.length} 条未确认问题，不能随旧结论锁进基线。`"
+          type="warning"
           :closable="false"
           show-icon
         />
@@ -216,6 +276,26 @@ async function submitComment() {
           :closable="false"
           show-icon
         />
+
+        <div v-if="selected?.confirmedIssues?.length" class="panel-title" style="margin-top: 16px">
+          <h3>随基线冻结的已确认问题</h3>
+        </div>
+        <el-table
+          v-if="selected?.confirmedIssues?.length"
+          :data="selected.confirmedIssues"
+          size="small"
+          max-height="220"
+        >
+          <el-table-column prop="pairLabel" label="保护对" min-width="160" />
+          <el-table-column prop="message" label="关闭时结论" min-width="220" show-overflow-tooltip />
+          <el-table-column label="依据版本" width="150">
+            <template #default="{ row }">
+              <span class="mono">
+                {{ Object.entries(row.basis).map(([id, v]) => `${id.slice(-6)}@V${v}`).join('，') }}
+              </span>
+            </template>
+          </el-table-column>
+        </el-table>
       </section>
     </div>
 

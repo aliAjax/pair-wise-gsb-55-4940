@@ -47,6 +47,14 @@ async function resetData() {
   preview.value = ''
   ElMessage.success('演示数据已恢复')
 }
+
+async function demoFailure() {
+  try {
+    await store.demoWriteFailure()
+  } catch (error) {
+    ElMessage.warning(error instanceof Error ? error.message : '写入失败并已恢复')
+  }
+}
 </script>
 
 <template>
@@ -56,6 +64,7 @@ async function resetData() {
       description="追踪设备、定值、问题、场景、基线和导出操作，生成可核对的定值清单。"
     >
       <template #actions>
+        <el-button @click="demoFailure">演练写入中断</el-button>
         <el-button @click="resetData">恢复演示数据</el-button>
         <el-button type="primary" :loading="exportMutation.isPending.value" @click="exportList">
           导出定值清单

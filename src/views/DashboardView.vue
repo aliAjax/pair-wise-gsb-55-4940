@@ -10,7 +10,10 @@ const router = useRouter()
 const store = useAppStore()
 const { data, issues, devices, scenarios, activeBaseline } = storeToRefs(store)
 
-const highIssues = computed(() => issues.value.filter((issue) => issue.level === 'high'))
+const highIssues = computed(() =>
+  issues.value.filter((issue) => issue.level === 'high' && issue.validity === 'current'),
+)
+const staleIssues = computed(() => issues.value.filter((issue) => issue.validity === 'stale'))
 const runningDevices = computed(() => devices.value.filter((device) => device.status === 'running').length)
 const approvedScenarios = computed(
   () => scenarios.value.filter((scenario) => ['approved', 'locked'].includes(scenario.status)).length,
@@ -53,6 +56,11 @@ const statusText = (status: string) =>
         <strong>{{ highIssues.length }}</strong>
         <small>需在基线锁定前关闭</small>
       </div>
+      <div class="metric warning" :class="{ 'metric-muted': !staleIssues.length }">
+        <span>失效待重算</span>
+        <strong>{{ staleIssues.length }}</strong>
+        <small>定值版本变化后旧结论失效</small>
+      </div>
       <div class="metric info">
         <span>运行设备</span>
         <strong>{{ runningDevices }} / {{ devices.length }}</strong>
@@ -77,7 +85,7 @@ const statusText = (status: string) =>
           <el-button text type="primary" @click="router.push('/coordination')">查看全部</el-button>
         </div>
         <IssueTable
-          :issues="issues.slice(0, 6)"
+          :issues="issues.filter((issue) => issue.validity === 'current').slice(0, 6)"
           :devices="devices"
           compact
           @select="router.push('/coordination')"

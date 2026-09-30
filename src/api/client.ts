@@ -4,12 +4,20 @@ import axios, {
   type AxiosResponse,
 } from 'axios'
 import type { AppState } from '@/types/domain'
-import { exportSettingsText, loadState, resetState, saveState } from '@/services/storage'
+import {
+  armNextWriteFailure,
+  commitState,
+  exportSettingsText,
+  loadState,
+  resetState,
+} from '@/services/storage'
 
 type MockRequest = {
   state?: AppState
   patch?: Partial<AppState>
-  action?: 'reset' | 'export'
+  /** 本次提交对应的业务动作，写入批次日志以便中断恢复后说明原因 */
+  reason?: string
+  action?: 'reset' | 'export' | 'fail-next'
 }
 
 function ok<T>(config: AxiosRequestConfig, data: T): AxiosResponse<T> {
@@ -29,20 +37,24 @@ const mockAdapter: AxiosAdapter = async (config) => {
     return ok(config, loadState())
   }
   if (config.url === '/state' && config.method === 'post') {
-    const next = payload.state ?? loadState()
-    saveState(next)
-    return ok(config, next)
+    // 两阶段写入：失败时原批次保留在本地，loadState 重开时自动恢复。
+    const result = commitState(payload.state ?? loadState(), payload.reason ?? '保存业务数据')
+    return ok(config, result.state)
   }
   if (config.url === '/state/patch' && config.method === 'post') {
     const state = { ...loadState(), ...payload.patch }
-    saveState(state)
-    return ok(config, state)
+    const result = commitState(state, payload.reason ?? '局部更新')
+    return ok(config, result.state)
   }
   if (config.url === '/actions/reset' && config.method === 'post') {
     return ok(config, resetState())
   }
   if (config.url === '/actions/export' && config.method === 'post') {
     return ok(config, { content: exportSettingsText(loadState()) })
+  }
+  if (config.url === '/actions/fail-next' && config.method === 'post') {
+    armNextWriteFailure()
+    return ok(config, { armed: true })
   }
   return Promise.reject(new Error(`未实现的本地接口：${config.method} ${config.url}`))
 }
@@ -58,13 +70,13 @@ export async function fetchState(): Promise<AppState> {
   return response.data
 }
 
-export async function persistState(state: AppState): Promise<AppState> {
-  const response = await http.post<AppState>('/state', { state })
+export async function persistState(state: AppState, reason?: string): Promise<AppState> {
+  const response = await http.post<AppState>('/state', { state, reason })
   return response.data
 }
 
-export async function patchState(patch: Partial<AppState>): Promise<AppState> {
-  const response = await http.post<AppState>('/state/patch', { patch })
+export async function patchState(patch: Partial<AppState>, reason?: string): Promise<AppState> {
+  const response = await http.post<AppState>('/state/patch', { patch, reason })
   return response.data
 }
 
@@ -76,4 +88,10 @@ export async function resetMockState(): Promise<AppState> {
 export async function exportSettings(): Promise<string> {
   const response = await http.post<{ content: string }>('/actions/export')
   return response.data.content
+}
+
+/** 让下一次状态写入失败，用于演示写入中断后的批次恢复 */
+export async function armWriteFailure(): Promise<{ armed: boolean }> {
+  const response = await http.post<{ armed: boolean }>('/actions/fail-next')
+  return response.data
 }

@@ -53,5 +53,12 @@ const statusLabel = (status: ValidationIssue['status']) =>
     <el-table-column label="状态" width="110">
       <template #default="{ row }">{{ statusLabel(row.status) }}</template>
     </el-table-column>
+    <el-table-column label="有效性" width="110">
+      <template #default="{ row }">
+        <el-tag :type="row.validity === 'stale' ? 'info' : 'success'" size="small" effect="plain">
+          {{ row.validity === 'stale' ? '已失效' : '当前有效' }}
+        </el-tag>
+      </template>
+    </el-table-column>
   </el-table>
 </template>

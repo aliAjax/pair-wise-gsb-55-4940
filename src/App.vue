@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { DataLine, DocumentChecked, Files, Operation, SetUp, Tickets } from '@element-plus/icons-vue'
 import { useAppStateQuery } from '@/api/queries'
 import { useAppStore } from '@/stores/app'
+import RecoveryNoticeBanner from '@/components/RecoveryNoticeBanner.vue'
 
 const route = useRoute()
 const store = useAppStore()
@@ -72,6 +73,7 @@ const menuItems = [
         </div>
       </el-header>
       <el-main class="app-main">
+        <RecoveryNoticeBanner v-if="store.hydrated" />
         <router-view />
       </el-main>
     </el-container>

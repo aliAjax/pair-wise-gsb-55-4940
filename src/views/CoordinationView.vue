@@ -15,6 +15,7 @@ const { data, devices, settings, issues } = storeToRefs(store)
 const typeFilter = ref<ValidationIssue['type'] | ''>('')
 const levelFilter = ref<ValidationIssue['level'] | ''>('')
 const statusFilter = ref<ValidationIssue['status'] | ''>('')
+const validityFilter = ref<'' | 'current' | 'stale'>('')
 const selected = ref<ValidationIssue>()
 const reply = ref('')
 const validating = ref(false)
@@ -26,9 +27,12 @@ const filtered = computed(() =>
     const matchesType = !typeFilter.value || issue.type === typeFilter.value
     const matchesLevel = !levelFilter.value || issue.level === levelFilter.value
     const matchesStatus = !statusFilter.value || issue.status === statusFilter.value
-    return matchesDevice && matchesType && matchesLevel && matchesStatus
+    const matchesValidity = !validityFilter.value || issue.validity === validityFilter.value
+    return matchesDevice && matchesType && matchesLevel && matchesStatus && matchesValidity
   }),
 )
+
+const staleCount = computed(() => issues.value.filter((issue) => issue.validity === 'stale').length)
 
 const selectedSetting = computed(() =>
   settings.value.find((setting) => setting.id === selected.value?.settingIds[0]),
@@ -63,18 +67,30 @@ async function runValidation() {
 
 async function markReplying() {
   if (!selected.value) return
+  if (selected.value.validity === 'stale') {
+    ElMessage.warning('该问题依据的定值版本已变化，请先重新批量校验')
+    return
+  }
   await store.updateIssue({ ...selected.value, status: 'replying' })
   ElMessage.success('问题已进入意见回复状态')
 }
 
 async function closeIssue() {
   if (!selected.value) return
+  if (selected.value.validity === 'stale') {
+    ElMessage.warning('失效结论不能关闭确认，请先重新批量校验')
+    return
+  }
   await store.updateIssue({ ...selected.value, status: 'closed' })
   ElMessage.success('问题已关闭，关闭动作已记录审计')
 }
 
 async function submitReply() {
   if (!selected.value || !reply.value.trim()) return
+  if (selected.value.validity === 'stale') {
+    ElMessage.warning('该问题已失效，请重新校验后再回复')
+    return
+  }
   await store.addComment({
     targetType: 'issue',
     targetId: selected.value.id,
@@ -96,9 +112,20 @@ async function submitReply() {
     >
       <template #actions>
         <el-button @click="deviceFilter = ''">清除设备定位</el-button>
-        <el-button type="primary" :loading="validating" @click="runValidation">批量校验</el-button>
+        <el-button type="primary" :loading="validating" @click="runValidation">
+          批量校验（按当前版本重算）
+        </el-button>
       </template>
     </PageHeader>
+
+    <el-alert
+      v-if="staleCount"
+      :title="`有 ${staleCount} 条校验问题因定值版本变化已失效，旧结论保留但不允许确认；请重新批量校验。`"
+      type="warning"
+      show-icon
+      :closable="false"
+      style="margin-bottom: 12px"
+    />
 
     <div class="toolbar">
       <el-select v-model="deviceFilter" clearable placeholder="定位设备" style="width: 220px">
@@ -125,6 +152,10 @@ async function submitReply() {
         <el-option label="回复中" value="replying" />
         <el-option label="已关闭" value="closed" />
       </el-select>
+      <el-select v-model="validityFilter" placeholder="结论有效性" style="width: 140px">
+        <el-option label="当前有效" value="current" />
+        <el-option label="已失效待重算" value="stale" />
+      </el-select>
       <span class="grow" />
       <span class="muted">当前显示 {{ filtered.length }} / {{ issues.length }} 条</span>
     </div>
@@ -147,6 +178,15 @@ async function submitReply() {
             />
             <span>
               <strong>{{ issue.pairLabel }}</strong>
+              <el-tag
+                v-if="issue.validity === 'stale'"
+                size="small"
+                type="info"
+                effect="plain"
+                style="margin-left: 6px"
+              >
+                已失效
+              </el-tag>
               <small>{{ issue.message }}</small>
             </span>
           </button>
@@ -161,10 +201,23 @@ async function submitReply() {
               <h3>{{ selected.pairLabel }}</h3>
               <span class="muted">{{ selected.message }}</span>
             </div>
-            <el-tag :type="selected.status === 'closed' ? 'success' : 'warning'" effect="plain">
-              {{ selected.status === 'closed' ? '已关闭' : selected.status === 'replying' ? '回复中' : '待处理' }}
-            </el-tag>
+            <div style="display: flex; gap: 6px; align-items: center">
+              <el-tag :type="selected.validity === 'stale' ? 'info' : 'success'" effect="plain">
+                {{ selected.validity === 'stale' ? '结论已失效' : '当前版本有效' }}
+              </el-tag>
+              <el-tag :type="selected.status === 'closed' ? 'success' : 'warning'" effect="plain">
+                {{ selected.status === 'closed' ? '已关闭' : selected.status === 'replying' ? '回复中' : '待处理' }}
+              </el-tag>
+            </div>
           </div>
+          <el-alert
+            v-if="selected.validity === 'stale'"
+            :title="`该结论基于旧定值版本，已于 ${selected.staleAt ? new Date(selected.staleAt).toLocaleString('zh-CN') : ''} 失效；重新批量校验前不能回复或关闭，也不会随旧结论锁进基线。`"
+            type="info"
+            :closable="false"
+            show-icon
+            style="margin-bottom: 10px"
+          />
           <el-alert
             :title="selected.suggestion"
             :type="selected.level === 'high' ? 'error' : 'warning'"
@@ -179,8 +232,17 @@ async function submitReply() {
             :selected-relay-id="selectedSetting?.relayId"
           />
           <div class="timeline-actions" style="margin-top: 14px">
-            <el-button :disabled="selected.status === 'closed'" @click="markReplying">进入意见回复</el-button>
-            <el-button type="success" :disabled="selected.status === 'closed'" @click="closeIssue">
+            <el-button
+              :disabled="selected.status === 'closed' || selected.validity === 'stale'"
+              @click="markReplying"
+            >
+              进入意见回复
+            </el-button>
+            <el-button
+              type="success"
+              :disabled="selected.status === 'closed' || selected.validity === 'stale'"
+              @click="closeIssue"
+            >
               关闭问题
             </el-button>
           </div>

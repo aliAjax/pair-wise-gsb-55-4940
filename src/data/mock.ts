@@ -19,6 +19,7 @@ const devices: Device[] = [
     voltage: 110,
     status: 'running',
     operationModes: ['正常方式', '单母线检修', '线路 N-1'],
+    version: 1,
   },
   {
     id: 'line-101',
@@ -30,6 +31,7 @@ const devices: Device[] = [
     parentId: 'bus-110-a',
     status: 'running',
     operationModes: ['正常方式', '线路 N-1'],
+    version: 1,
   },
   {
     id: 'breaker-101',
@@ -41,6 +43,7 @@ const devices: Device[] = [
     parentId: 'line-101',
     status: 'running',
     operationModes: ['正常方式', '线路 N-1'],
+    version: 1,
   },
   {
     id: 'relay-l101',
@@ -52,6 +55,7 @@ const devices: Device[] = [
     parentId: 'line-101',
     status: 'running',
     operationModes: ['正常方式', '线路 N-1'],
+    version: 1,
   },
   {
     id: 'transformer-1',
@@ -63,6 +67,7 @@ const devices: Device[] = [
     parentId: 'bus-110-a',
     status: 'running',
     operationModes: ['正常方式', '单母线检修'],
+    version: 1,
   },
   {
     id: 'relay-t1',
@@ -74,6 +79,7 @@ const devices: Device[] = [
     parentId: 'transformer-1',
     status: 'running',
     operationModes: ['正常方式', '单母线检修', '变压器检修'],
+    version: 1,
   },
   {
     id: 'bus-35-b',
@@ -85,6 +91,7 @@ const devices: Device[] = [
     parentId: 'transformer-1',
     status: 'running',
     operationModes: ['正常方式', '线路 N-1'],
+    version: 1,
   },
   {
     id: 'line-201',
@@ -96,6 +103,7 @@ const devices: Device[] = [
     parentId: 'bus-35-b',
     status: 'running',
     operationModes: ['正常方式', '线路 N-1'],
+    version: 1,
   },
   {
     id: 'relay-l201',
@@ -107,6 +115,7 @@ const devices: Device[] = [
     parentId: 'line-201',
     status: 'running',
     operationModes: ['正常方式', '线路 N-1'],
+    version: 1,
   },
   {
     id: 'line-202',
@@ -118,6 +127,7 @@ const devices: Device[] = [
     parentId: 'bus-35-b',
     status: 'maintenance',
     operationModes: ['正常方式', '线路 N-1'],
+    version: 1,
   },
   {
     id: 'relay-l202',
@@ -129,6 +139,7 @@ const devices: Device[] = [
     parentId: 'line-202',
     status: 'running',
     operationModes: ['正常方式', '线路 N-1'],
+    version: 1,
   },
   {
     id: 'relay-bus-a',
@@ -140,6 +151,7 @@ const devices: Device[] = [
     parentId: 'bus-110-a',
     status: 'running',
     operationModes: ['正常方式', '单母线检修'],
+    version: 1,
   },
 ]
 
@@ -157,6 +169,7 @@ const settings: ProtectionSetting[] = [
     recloseDelayS: 1.2,
     startCondition: '相电流突变量启动',
     updatedAt: '2026-09-20T03:20:00.000Z',
+    version: 1,
   },
   {
     id: 'set-l101-2',
@@ -171,6 +184,7 @@ const settings: ProtectionSetting[] = [
     recloseDelayS: 0,
     startCondition: '相电流越限启动',
     updatedAt: '2026-09-20T03:20:00.000Z',
+    version: 1,
   },
   {
     id: 'set-l201-1',
@@ -185,6 +199,7 @@ const settings: ProtectionSetting[] = [
     recloseDelayS: 1.4,
     startCondition: '相电流突变量启动',
     updatedAt: '2026-09-21T04:10:00.000Z',
+    version: 1,
   },
   {
     id: 'set-l201-2',
@@ -199,6 +214,7 @@ const settings: ProtectionSetting[] = [
     recloseDelayS: 0,
     startCondition: '相电流越限启动',
     updatedAt: '2026-09-21T04:10:00.000Z',
+    version: 1,
   },
   {
     id: 'set-l202-1',
@@ -213,6 +229,7 @@ const settings: ProtectionSetting[] = [
     recloseDelayS: 1.7,
     startCondition: '相电流突变量启动',
     updatedAt: '2026-09-21T04:25:00.000Z',
+    version: 1,
   },
   {
     id: 'set-l202-2',
@@ -227,6 +244,7 @@ const settings: ProtectionSetting[] = [
     recloseDelayS: 0,
     startCondition: '相电流越限启动',
     updatedAt: '2026-09-21T04:25:00.000Z',
+    version: 1,
   },
   {
     id: 'set-t1-1',
@@ -241,6 +259,7 @@ const settings: ProtectionSetting[] = [
     recloseDelayS: 0,
     startCondition: '差流速断启动',
     updatedAt: '2026-09-22T05:00:00.000Z',
+    version: 1,
   },
   {
     id: 'set-t1-2',
@@ -255,6 +274,7 @@ const settings: ProtectionSetting[] = [
     recloseDelayS: 0,
     startCondition: '相电流越限启动',
     updatedAt: '2026-09-22T05:00:00.000Z',
+    version: 1,
   },
   {
     id: 'set-busa-1',
@@ -269,6 +289,7 @@ const settings: ProtectionSetting[] = [
     recloseDelayS: 1.55,
     startCondition: '母线差流启动',
     updatedAt: '2026-09-22T05:30:00.000Z',
+    version: 1,
   },
 ]
 
@@ -342,7 +363,12 @@ const audit: AuditEntry[] = [
 
 export function createInitialState(): AppState {
   const clonedSettings = settings.map((setting) => ({ ...setting }))
+  const settingVersions: Record<string, number> = {}
+  clonedSettings.forEach((setting) => {
+    settingVersions[setting.id] = setting.version
+  })
   return {
+    schemaVersion: 2,
     devices: devices.map((device) => ({ ...device, operationModes: [...device.operationModes] })),
     settings: clonedSettings,
     issues: validateSettings(clonedSettings, devices),
@@ -361,6 +387,7 @@ export function createInitialState(): AppState {
         createdBy: '陈工',
         note: '秋检前正式运行定值',
         snapshot: clonedSettings.map((setting) => ({ ...setting, currentA: setting.currentA + 0.1 })),
+        settingVersions,
         checksum: 'A5F1-927C',
       },
     ],
@@ -376,6 +403,8 @@ export function createInitialState(): AppState {
       },
     ],
     audit,
+    settingDrafts: [],
+    recoveryNotices: [],
   }
 }
 

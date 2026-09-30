@@ -40,6 +40,10 @@ export function validateSettings(
     pairLabel: string,
   ) => {
     const meta = issueMeta[type]
+    const basis: Record<string, number> = {}
+    pair.forEach((item) => {
+      basis[item.id] = item.version
+    })
     issues.push({
       id: `${type}-${pair.map((item) => item.id).join('-')}`,
       type,
@@ -51,6 +55,8 @@ export function validateSettings(
       pairLabel,
       status: 'open',
       createdAt: now,
+      validity: 'current',
+      basis,
     })
   }
 
