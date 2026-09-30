@@ -4,12 +4,21 @@ import type {
   Device,
   FaultScenario,
   ProtectionSetting,
+  RelaySnapshotEntry,
+  ValidationIssue,
 } from '@/types/domain'
 import { validateSettings } from '@/services/validation'
+import { CURRENT_SCHEMA_VERSION } from '@/services/migration'
 
 export const operationModes = ['正常方式', '单母线检修', '线路 N-1', '变压器检修']
 
-const devices: Device[] = [
+const INITIAL_AT = '2026-09-01T00:00:00.000Z'
+
+function withVersion(device: Omit<Device, 'version' | 'versionUpdatedAt'>): Device {
+  return { ...device, version: 1, versionUpdatedAt: INITIAL_AT }
+}
+
+const deviceRecords: Omit<Device, 'version' | 'versionUpdatedAt'>[] = [
   {
     id: 'bus-110-a',
     code: 'BUS-110-A',
@@ -142,6 +151,8 @@ const devices: Device[] = [
     operationModes: ['正常方式', '单母线检修'],
   },
 ]
+
+const devices: Device[] = deviceRecords.map(withVersion)
 
 const settings: ProtectionSetting[] = [
   {
@@ -340,12 +351,53 @@ const audit: AuditEntry[] = [
   },
 ]
 
+function initialRelayVersions(settings: ProtectionSetting[]): Record<string, number> {
+  const versions: Record<string, number> = {}
+  settings.forEach((setting) => {
+    versions[setting.relayId] = 1
+  })
+  return versions
+}
+
+function annotateIssues(
+  settings: ProtectionSetting[],
+  issues: ValidationIssue[],
+  batchId: string,
+): ValidationIssue[] {
+  const versions = initialRelayVersions(settings)
+  return issues.map((issue) => ({
+    ...issue,
+    batchId,
+    baseVersions: Object.fromEntries(
+      [...new Set(issue.settingIds.map((id) => settings.find((s) => s.id === id)?.relayId).filter(Boolean))]
+        .map((relayId) => [relayId as string, versions[relayId as string] ?? 1]),
+    ),
+  }))
+}
+
 export function createInitialState(): AppState {
   const clonedSettings = settings.map((setting) => ({ ...setting }))
+  const initialBatchId = 'batch-initial'
+  const initialIssues = annotateIssues(
+    clonedSettings,
+    validateSettings(clonedSettings, devices),
+    initialBatchId,
+  )
+  const relaySnapshots: RelaySnapshotEntry[] = devices
+    .filter((device) => device.kind === 'relay')
+    .map((relay) => ({
+      relayId: relay.id,
+      version: 1,
+      at: INITIAL_AT,
+      settingIds: clonedSettings
+        .filter((setting) => setting.relayId === relay.id)
+        .map((setting) => setting.id),
+    }))
   return {
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     devices: devices.map((device) => ({ ...device, operationModes: [...device.operationModes] })),
     settings: clonedSettings,
-    issues: validateSettings(clonedSettings, devices),
+    issues: initialIssues,
     scenarios: scenarios.map((scenario) => ({
       ...scenario,
       steps: scenario.steps.map((step) => ({ ...step })),
@@ -362,6 +414,9 @@ export function createInitialState(): AppState {
         note: '秋检前正式运行定值',
         snapshot: clonedSettings.map((setting) => ({ ...setting, currentA: setting.currentA + 0.1 })),
         checksum: 'A5F1-927C',
+        relayVersions: initialRelayVersions(clonedSettings),
+        validationBatchId: initialBatchId,
+        confirmedIssues: [],
       },
     ],
     comments: [
@@ -376,6 +431,18 @@ export function createInitialState(): AppState {
       },
     ],
     audit,
+    drafts: [],
+    validationBatches: [
+      {
+        id: initialBatchId,
+        startedAt: '2026-09-01T01:00:00.000Z',
+        finishedAt: '2026-09-01T01:05:00.000Z',
+        relayVersions: initialRelayVersions(clonedSettings),
+        issueIds: initialIssues.map((issue) => issue.id),
+      },
+    ],
+    relaySnapshots,
+    notices: [],
   }
 }
 

@@ -27,12 +27,30 @@ const issueMeta: Record<ValidationIssue['type'], Pick<ValidationIssue, 'level' |
 const deviceName = (devices: Device[], id: string) =>
   devices.find((device) => device.id === id)?.name ?? id
 
+export interface ValidateOptions {
+  batchId?: string
+  createdAt?: string
+}
+
+/** 取一组定值涉及装置的当前版本，作为问题结论的版本基线 */
+function baseVersionsFor(
+  pair: ProtectionSetting[],
+  devices: Device[],
+): Record<string, number> {
+  const versions: Record<string, number> = {}
+  ;[...new Set(pair.map((item) => item.relayId))].forEach((relayId) => {
+    versions[relayId] = devices.find((device) => device.id === relayId)?.version ?? 1
+  })
+  return versions
+}
+
 export function validateSettings(
   settings: ProtectionSetting[],
   devices: Device[],
+  options: ValidateOptions = {},
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = []
-  const now = new Date().toISOString()
+  const createdAt = options.createdAt ?? new Date().toISOString()
   const addIssue = (
     type: ValidationIssue['type'],
     pair: ProtectionSetting[],
@@ -50,7 +68,10 @@ export function validateSettings(
       suggestion: meta.suggestion,
       pairLabel,
       status: 'open',
-      createdAt: now,
+      createdAt,
+      batchId: options.batchId,
+      baseVersions: baseVersionsFor(pair, devices),
+      stale: false,
     })
   }
 
@@ -122,6 +143,30 @@ export function validateSettings(
   const unique = new Map<string, ValidationIssue>()
   issues.forEach((issue) => unique.set(issue.id, issue))
   return [...unique.values()]
+}
+
+/**
+ * 基于当前定值重新计算问题：
+ * - 装置版本未变、问题仍然存在的，保留人工处理状态与会签记录；
+ * - 曾因版本变化失效（stale）的问题重算后重新有效，回到待处理，需重新确认；
+ * - 已消失的问题不再出现在结论中。
+ */
+export function recomputeIssues(
+  previous: ValidationIssue[],
+  settings: ProtectionSetting[],
+  devices: Device[],
+  batchId: string,
+): ValidationIssue[] {
+  const fresh = validateSettings(settings, devices, { batchId })
+  const prevById = new Map(previous.map((issue) => [issue.id, issue]))
+  return fresh.map((issue) => {
+    const prev = prevById.get(issue.id)
+    if (prev && !prev.stale) {
+      // 版本基线已是新版本，旧结论在该版本下仍成立：保留人工状态
+      return { ...issue, status: prev.status, createdAt: prev.createdAt }
+    }
+    return issue
+  })
 }
 
 export function diffSettings(

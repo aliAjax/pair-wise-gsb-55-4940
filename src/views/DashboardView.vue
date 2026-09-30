@@ -11,6 +11,8 @@ const store = useAppStore()
 const { data, issues, devices, scenarios, activeBaseline } = storeToRefs(store)
 
 const highIssues = computed(() => issues.value.filter((issue) => issue.level === 'high'))
+const staleIssueCount = computed(() => issues.value.filter((issue) => issue.stale).length)
+const draftCount = computed(() => store.drafts.length)
 const runningDevices = computed(() => devices.value.filter((device) => device.status === 'running').length)
 const approvedScenarios = computed(
   () => scenarios.value.filter((scenario) => ['approved', 'locked'].includes(scenario.status)).length,
@@ -53,6 +55,11 @@ const statusText = (status: string) =>
         <strong>{{ highIssues.length }}</strong>
         <small>需在基线锁定前关闭</small>
       </div>
+      <div class="metric warning">
+        <span>失效待重算</span>
+        <strong>{{ staleIssueCount }}</strong>
+        <small>装置版本变化后旧结论失效</small>
+      </div>
       <div class="metric info">
         <span>运行设备</span>
         <strong>{{ runningDevices }} / {{ devices.length }}</strong>
@@ -67,6 +74,11 @@ const statusText = (status: string) =>
         <span>当前基线</span>
         <strong>{{ activeBaseline?.version ?? 'V1.0' }}</strong>
         <small>{{ activeBaseline?.checksum ?? 'A5F1-927C' }}</small>
+      </div>
+      <div v-if="draftCount" class="metric danger">
+        <span>冲突草稿</span>
+        <strong>{{ draftCount }}</strong>
+        <small>晚到提交待合并</small>
       </div>
     </section>
 

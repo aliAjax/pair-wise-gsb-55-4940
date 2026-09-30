@@ -6,17 +6,22 @@ import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import GuardCurveCanvas from '@/components/GuardCurveCanvas.vue'
+import ConflictDraftDialog from '@/components/ConflictDraftDialog.vue'
 import { useAppStore } from '@/stores/app'
 import { deviceKindLabels, operationModes } from '@/data/mock'
-import type { Device, ProtectionSetting } from '@/types/domain'
+import type { Device, ProtectionSetting, SettingDraft } from '@/types/domain'
 
 const route = useRoute()
 const router = useRouter()
 const store = useAppStore()
-const { devices, settings } = storeToRefs(store)
+const { devices, settings, drafts } = storeToRefs(store)
 const formRef = ref<FormInstance>()
 const settingFormRef = ref<FormInstance>()
 const settingDialog = ref(false)
+/** 保存前冻结的装置版本与打开时的定值基准 */
+const frozenRelayVersion = ref(1)
+const baseSettingSnapshot = ref<ProtectionSetting | null>(null)
+const activeConflict = ref<SettingDraft | null>(null)
 
 const deviceId = computed(() => (typeof route.params.id === 'string' ? route.params.id : ''))
 const isCreating = computed(() => !deviceId.value || deviceId.value === 'new')
@@ -24,8 +29,12 @@ const editingDevice = computed(() => devices.value.find((device) => device.id ==
 const relaySettings = computed(() =>
   settings.value.filter((setting) => setting.relayId === deviceId.value),
 )
+/** 当前装置上未处理的冲突草稿 */
+const relayDrafts = computed(() =>
+  drafts.value.filter((draft) => draft.relayId === deviceId.value),
+)
 
-const emptyDevice = (): Omit<Device, 'id'> => ({
+const emptyDevice = (): Omit<Device, 'id' | 'version'> => ({
   code: '',
   name: '',
   kind: 'relay',
@@ -35,7 +44,7 @@ const emptyDevice = (): Omit<Device, 'id'> => ({
   operationModes: ['正常方式'],
 })
 
-const deviceForm = reactive<Omit<Device, 'id'>>(emptyDevice())
+const deviceForm = reactive<Omit<Device, 'id' | 'version'>>(emptyDevice())
 const settingForm = reactive<ProtectionSetting>({
   id: '',
   relayId: deviceId.value,
@@ -86,24 +95,34 @@ watch(
 
 async function saveDevice() {
   await formRef.value?.validate()
-  if (isCreating.value) {
-    const created = await store.addDevice({ ...deviceForm, operationModes: [...deviceForm.operationModes] })
-    ElMessage.success('设备已创建')
-    await router.replace(`/devices/${created.id}`)
-    return
+  try {
+    if (isCreating.value) {
+      const created = await store.addDevice({ ...deviceForm, operationModes: [...deviceForm.operationModes] })
+      ElMessage.success('设备已创建')
+      await router.replace(`/devices/${created.id}`)
+      return
+    }
+    if (!editingDevice.value) return
+    await store.updateDevice({
+      ...editingDevice.value,
+      ...deviceForm,
+      operationModes: [...deviceForm.operationModes],
+    })
+    ElMessage.success('设备信息已保存')
+  } catch (error) {
+    ElMessage.error(
+      error instanceof Error
+        ? `保存失败，数据已恢复到保存前：${error.message}`
+        : '保存失败，数据已恢复到保存前',
+    )
   }
-  if (!editingDevice.value) return
-  await store.updateDevice({
-    ...editingDevice.value,
-    ...deviceForm,
-    operationModes: [...deviceForm.operationModes],
-  })
-  ElMessage.success('设备信息已保存')
 }
 
 function openSetting(setting?: ProtectionSetting) {
   if (setting) {
     Object.assign(settingForm, setting)
+    // 保存前冻结：记录编辑基准定值与当前装置版本
+    baseSettingSnapshot.value = { ...setting }
   } else {
     Object.assign(settingForm, {
       id: `set-${Date.now()}`,
@@ -119,15 +138,56 @@ function openSetting(setting?: ProtectionSetting) {
       startCondition: '相电流越限启动',
       updatedAt: new Date().toISOString(),
     })
+    baseSettingSnapshot.value = null
   }
+  frozenRelayVersion.value = editingDevice.value?.version ?? 1
   settingDialog.value = true
 }
 
 async function saveSetting() {
   await settingFormRef.value?.validate()
-  await store.saveSetting({ ...settingForm, relayId: deviceId.value })
+  let result
+  try {
+    result = await store.saveSetting(
+      { ...settingForm, relayId: deviceId.value },
+      frozenRelayVersion.value,
+      baseSettingSnapshot.value,
+    )
+  } catch (error) {
+    ElMessage.error(
+      error instanceof Error
+        ? `定值写入失败，已从原批次恢复：${error.message}（详见顶部恢复通知）`
+        : '定值写入失败，已从原批次恢复',
+    )
+    settingDialog.value = false
+    return
+  }
+  if (result.outcome === 'conflict') {
+    settingDialog.value = false
+    activeConflict.value = result.draft
+    ElMessage.warning('其他终端已保存新版本，你的修改已保留为草稿，请处理冲突字段')
+    return
+  }
   settingDialog.value = false
-  ElMessage.success('保护定值已保存')
+  ElMessage.success(
+    `保护定值已保存，装置版本冻结为 V${(editingDevice.value?.version ?? 1)}，关联校验问题将在重算后更新`,
+  )
+}
+
+function reopenDraft(
+  merged: ProtectionSetting,
+  baseVersion: number,
+  base: ProtectionSetting | null,
+) {
+  Object.assign(settingForm, merged)
+  frozenRelayVersion.value = baseVersion
+  baseSettingSnapshot.value = base
+  activeConflict.value = null
+  settingDialog.value = true
+}
+
+function openDraft(draft: SettingDraft) {
+  activeConflict.value = draft
 }
 </script>
 
@@ -202,8 +262,31 @@ async function saveSetting() {
     <section v-if="!isCreating && editingDevice?.kind === 'relay'" class="panel">
       <div class="panel-title">
         <h3>保护定值</h3>
-        <el-button type="primary" @click="openSetting()">新增定值段</el-button>
+        <div class="title-actions">
+          <el-tag type="info" effect="plain">
+            装置冻结版本 V{{ editingDevice.version }}
+            <span class="version-time">
+              {{ editingDevice.versionUpdatedAt ? new Date(editingDevice.versionUpdatedAt).toLocaleString('zh-CN') : '' }}
+            </span>
+          </el-tag>
+          <el-button type="primary" @click="openSetting()">新增定值段</el-button>
+        </div>
       </div>
+
+      <el-alert
+        v-if="relayDrafts.length"
+        type="error"
+        :closable="false"
+        show-icon
+        class="draft-alert"
+        :title="`本装置有 ${relayDrafts.length} 份因并发保存而保留的草稿，晚到提交未覆盖他人结果`"
+      >
+        <div v-for="draft in relayDrafts" :key="draft.id" class="draft-row">
+          <span>{{ draft.setting.stage }} 段 · {{ draft.conflictFields.length }} 个冲突字段</span>
+          <el-button size="small" type="primary" @click="openDraft(draft)">查看并合并</el-button>
+        </div>
+      </el-alert>
+
       <el-table :data="relaySettings">
         <el-table-column prop="stage" label="段位" width="70" />
         <el-table-column label="保护对象" min-width="170">
@@ -228,6 +311,12 @@ async function saveSetting() {
         </el-table-column>
       </el-table>
     </section>
+
+    <ConflictDraftDialog
+      :draft="activeConflict"
+      @closed="activeConflict = null"
+      @reopen="reopenDraft"
+    />
 
     <el-dialog v-model="settingDialog" title="保护定值段" width="560px">
       <el-form ref="settingFormRef" :model="settingForm" :rules="settingRules" label-width="110px">
@@ -283,9 +372,45 @@ async function saveSetting() {
         </el-form-item>
       </el-form>
       <template #footer>
+        <span class="frozen-hint">保存基于装置版本 V{{ frozenRelayVersion }}；若期间他人已保存，将保留本草稿并列出冲突字段。</span>
         <el-button @click="settingDialog = false">取消</el-button>
         <el-button type="primary" @click="saveSetting">保存定值</el-button>
       </template>
     </el-dialog>
   </div>
 </template>
+
+<style scoped>
+.title-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.version-time {
+  margin-left: 6px;
+  font-weight: normal;
+  font-size: 11px;
+  color: #90a0ad;
+}
+
+.draft-alert {
+  margin-bottom: 12px;
+}
+
+.draft-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.frozen-hint {
+  float: left;
+  padding-top: 5px;
+  font-size: 12px;
+  color: #90a0ad;
+}
+</style>

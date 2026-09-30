@@ -5,9 +5,10 @@ import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import { useAppStore } from '@/stores/app'
 import { diffSettings } from '@/services/validation'
+import { issueLabels } from '@/data/mock'
 
 const store = useAppStore()
-const { data, settings } = storeToRefs(store)
+const { data, settings, devices, issues, staleIssues, validationBatches } = storeToRefs(store)
 const selectedId = ref(data.value.activeBaselineId ?? data.value.baselines[0]?.id ?? '')
 const createDialog = ref(false)
 const baselineNote = ref('')
@@ -22,6 +23,13 @@ const baselineComments = computed(() =>
   data.value.comments.filter(
     (item) => item.targetType === 'baseline' && item.targetId === selectedId.value,
   ),
+)
+const latestBatch = computed(() => validationBatches.value[0])
+const highOpenIssues = computed(() =>
+  issues.value.filter((issue) => issue.level === 'high' && issue.status !== 'closed'),
+)
+const canLock = computed(
+  () => staleIssues.value.length === 0 && highOpenIssues.value.length === 0,
 )
 
 watch(
@@ -41,6 +49,10 @@ const fieldLabels: Record<string, string> = {
   startCondition: '启动条件',
 }
 
+function relayName(id: string) {
+  return devices.value.find((device) => device.id === id)?.name ?? id
+}
+
 async function createBaseline() {
   if (!baselineNote.value.trim()) {
     ElMessage.warning('请填写本次基线说明')
@@ -57,7 +69,7 @@ async function lockBaseline() {
   if (!selected.value) return
   try {
     await store.approveBaseline(selected.value.id)
-    ElMessage.success('基线已批准并锁定')
+    ElMessage.success('基线已批准并锁定，仅已确认问题结论随快照冻结')
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '基线锁定失败')
   }
@@ -81,13 +93,13 @@ async function submitComment() {
   <div>
     <PageHeader
       title="会签与基线"
-      description="冻结已批准的定值快照；高风险问题未闭环时不允许锁定基线。"
+      description="冻结定值快照与装置版本；失效待重算或高风险未确认问题存在时，不能把旧结论锁进基线。"
     >
       <template #actions>
         <el-button @click="createDialog = true">创建基线上会签</el-button>
         <el-button
           type="primary"
-          :disabled="!selected || selected.status === 'locked'"
+          :disabled="!selected || selected.status === 'locked' || !canLock"
           :loading="store.saving"
           @click="lockBaseline"
         >
@@ -104,9 +116,9 @@ async function submitComment() {
         </div>
         <el-table :data="data.baselines" highlight-current-row @current-change="selectedId = $event?.id ?? selectedId">
           <el-table-column prop="version" label="版本" width="90" />
-          <el-table-column prop="note" label="说明" min-width="220" />
-          <el-table-column prop="createdBy" label="创建人" width="95" />
-          <el-table-column label="状态" width="100">
+          <el-table-column prop="note" label="说明" min-width="200" />
+          <el-table-column prop="createdBy" label="创建人" width="90" />
+          <el-table-column label="状态" width="95">
             <template #default="{ row }">
               <el-tag
                 :type="row.status === 'locked' ? 'success' : row.status === 'reviewing' ? 'warning' : 'info'"
@@ -140,7 +152,36 @@ async function submitComment() {
             <el-descriptions-item label="校验码">
               <span class="mono">{{ selected.checksum }}</span>
             </el-descriptions-item>
+            <el-descriptions-item label="冻结装置版本">
+              <el-tag
+                v-for="(version, relayId) in selected.relayVersions"
+                :key="relayId"
+                size="small"
+                effect="plain"
+                class="version-tag"
+              >
+                {{ relayName(String(relayId)) }} V{{ version }}
+              </el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="校验批次">
+              {{ selected.validationBatchId ? selected.validationBatchId.slice(-6) : '锁定时未绑定批次' }}
+            </el-descriptions-item>
           </el-descriptions>
+
+          <div v-if="selected.confirmedIssues?.length" class="panel-title" style="margin-top: 14px">
+            <h3>随基线冻结的已确认问题（{{ selected.confirmedIssues.length }}）</h3>
+          </div>
+          <el-table v-if="selected.confirmedIssues?.length" :data="selected.confirmedIssues" max-height="200">
+            <el-table-column label="类型" width="110">
+              <template #default="{ row }">
+                {{ issueLabels[row.type as keyof typeof issueLabels] }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="pairLabel" label="保护对" min-width="160" />
+            <el-table-column label="结论状态" width="90">
+              <template #default>已关闭</template>
+            </el-table-column>
+          </el-table>
 
           <div class="panel-title" style="margin-top: 18px">
             <h3>与当前定值差异</h3>
@@ -151,7 +192,7 @@ async function submitComment() {
           <el-table :data="diffs" max-height="260">
             <el-table-column label="保护装置" width="115">
               <template #default="{ row }">
-                {{ data.devices.find((device) => device.id === row.relayName)?.name ?? row.relayName }}
+                {{ devices.find((device) => device.id === row.relayName)?.name ?? row.relayName }}
               </template>
             </el-table-column>
             <el-table-column label="字段" width="110">
@@ -193,25 +234,34 @@ async function submitComment() {
       <section class="panel">
         <div class="panel-title"><h3>锁定条件</h3></div>
         <div class="lock-checklist">
-          <el-checkbox :model-value="true" disabled>批量校验已执行并留痕</el-checkbox>
-          <el-checkbox :model-value="true" disabled>至少一个故障场景已完成验证</el-checkbox>
-          <el-checkbox
-            :model-value="!data.issues.some((issue) => issue.level === 'high' && issue.status !== 'closed')"
-            disabled
-          >
-            高风险问题全部关闭
+          <el-checkbox :model-value="Boolean(latestBatch)" disabled>
+            已存在完整校验批次{{ latestBatch ? `（${latestBatch.id.slice(-6)}）` : '' }}
           </el-checkbox>
+          <el-checkbox :model-value="staleIssues.length === 0" disabled>
+            没有因装置版本变化而失效的待重算问题（{{ staleIssues.length }} 条失效）
+          </el-checkbox>
+          <el-checkbox :model-value="highOpenIssues.length === 0" disabled>
+            高风险问题全部确认关闭（{{ highOpenIssues.length }} 条未关闭）
+          </el-checkbox>
+          <el-checkbox :model-value="true" disabled>仅冻结当前版本下已确认（已关闭且未失效）的问题结论</el-checkbox>
         </div>
         <el-alert
-          v-if="data.issues.some((issue) => issue.level === 'high' && issue.status !== 'closed')"
-          title="当前存在未关闭的高风险问题，批准锁定会被系统拒绝。"
+          v-if="staleIssues.length"
+          :title="`${staleIssues.length} 条结论随装置版本变化已失效，未重新校验前禁止锁定基线。`"
+          type="error"
+          :closable="false"
+          show-icon
+        />
+        <el-alert
+          v-else-if="highOpenIssues.length"
+          title="存在未确认关闭的高风险问题，批准锁定会被系统拒绝。"
           type="error"
           :closable="false"
           show-icon
         />
         <el-alert
           v-else
-          title="锁定条件已满足，可以执行批准并锁定。"
+          title="锁定条件已满足：未确认问题不会进入基线，可以执行批准并锁定。"
           type="success"
           :closable="false"
           show-icon
@@ -234,3 +284,9 @@ async function submitComment() {
     </el-dialog>
   </div>
 </template>
+
+<style scoped>
+.version-tag {
+  margin: 2px 6px 2px 0;
+}
+</style>

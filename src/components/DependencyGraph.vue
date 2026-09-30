@@ -93,6 +93,25 @@ const graphHeight = computed(() =>
         <text :x="node.x + 10" :y="node.y + 34" font-size="12" fill="#1f2f3f">
           {{ node.name }}
         </text>
+        <g v-if="node.kind === 'relay'">
+          <rect
+            :x="node.x + 92"
+            :y="node.y + 6"
+            width="34"
+            height="16"
+            rx="8"
+            fill="#2b7a78"
+          />
+          <text
+            :x="node.x + 109"
+            :y="node.y + 18"
+            font-size="10"
+            fill="#ffffff"
+            text-anchor="middle"
+          >
+            V{{ node.version }}
+          </text>
+        </g>
       </g>
     </svg>
   </div>

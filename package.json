@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 18455",
     "build": "vue-tsc -b && vite build",
-    "preview": "vite preview --host 0.0.0.0 --port 18455"
+    "preview": "vite preview --host 0.0.0.0 --port 18455",
+    "test:logic": "esbuild scripts/smoke.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=node_modules/.tmp/smoke.mjs --log-level=warning && node node_modules/.tmp/smoke.mjs",
+    "test:e2e": "esbuild scripts/e2e.ts --bundle --platform=node --format=cjs --alias:@=./src --outfile=node_modules/.tmp/e2e.cjs --log-level=warning && node node_modules/.tmp/e2e.cjs",
+    "test": "npm run test:logic && npm run test:e2e"
   },
   "dependencies": {
     "@element-plus/icons-vue": "2.3.1",

@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { DataLine, DocumentChecked, Files, Operation, SetUp, Tickets } from '@element-plus/icons-vue'
 import { useAppStateQuery } from '@/api/queries'
 import { useAppStore } from '@/stores/app'
+import SystemNoticeBar from '@/components/SystemNoticeBar.vue'
 
 const route = useRoute()
 const store = useAppStore()
@@ -11,8 +12,8 @@ const { data, isLoading, isError, error } = useAppStateQuery()
 
 watch(
   data,
-  (state) => {
-    if (state && !store.hydrated) store.hydrate(state)
+  (envelope) => {
+    if (envelope && !store.hydrated) store.hydrate(envelope)
   },
   { immediate: true },
 )
@@ -67,11 +68,19 @@ const menuItems = [
         </div>
         <div class="header-actions">
           <el-tag v-if="store.saving" type="warning">正在保存</el-tag>
-          <el-tag v-else type="success">数据已持久化</el-tag>
+          <el-tag v-if="store.validating" type="warning">校验进行中</el-tag>
+          <el-tag v-if="store.staleIssues.length" type="danger" effect="dark">
+            {{ store.staleIssues.length }} 条结论待重算
+          </el-tag>
+          <el-tag v-if="store.drafts.length" type="warning" effect="dark">
+            {{ store.drafts.length }} 份冲突草稿
+          </el-tag>
+          <el-tag v-else-if="!store.saving" type="success">数据已持久化 · rev{{ store.revision }}</el-tag>
           <el-avatar :size="32">陈</el-avatar>
         </div>
       </el-header>
       <el-main class="app-main">
+        <SystemNoticeBar />
         <router-view />
       </el-main>
     </el-container>

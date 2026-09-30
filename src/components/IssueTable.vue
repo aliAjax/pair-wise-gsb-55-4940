@@ -53,5 +53,11 @@ const statusLabel = (status: ValidationIssue['status']) =>
     <el-table-column label="状态" width="110">
       <template #default="{ row }">{{ statusLabel(row.status) }}</template>
     </el-table-column>
+    <el-table-column label="版本" width="100">
+      <template #default="{ row }">
+        <el-tag v-if="row.stale" type="danger" effect="dark" size="small">失效重算</el-tag>
+        <el-tag v-else type="success" effect="plain" size="small">当前版本</el-tag>
+      </template>
+    </el-table-column>
   </el-table>
 </template>
